@@ -1,63 +1,51 @@
-import streamlit as st
 import pandas as pd
-import plotly.express as px
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
+import re
+from tqdm import tqdm
+from transformers import pipeline
 
-st.set_page_config(page_title="Cambio Climático", layout="wide")
+ruta = "/content/drive/MyDrive/Analisis_Sentimiento"
 
-st.title("🌍 Análisis de Sentimiento sobre el Cambio Climático")
-st.subheader("Analisis_Sentimiento_Cambio_Climatico - UNMSM")
+# Cargar solo 10,000 tweets
+df = pd.read_csv(f"{ruta}/twitter_sentiment_data.csv")
+df = df.sample(n=10000, random_state=42).reset_index(drop=True)
+print(f"✅ Procesando 10,000 tweets (de {len(pd.read_csv(f'{ruta}/twitter_sentiment_data.csv'))} totales)")
 
-# Cargar datos
-try:
-    df = pd.read_csv("datos_con_sentimiento.csv")
-    st.success(f"✅ {len(df):,} publicaciones analizadas")
-except:
-    st.error("No se encontró el archivo datos_con_sentimiento.csv")
-    st.stop()
+# Limpieza
+def limpiar_texto(text):
+    if not isinstance(text, str):
+        return ""
+    text = text.lower()
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)
+    text = re.sub(r'@\w+', '', text)
+    text = re.sub(r'#\w+', '', text)
+    text = re.sub(r'[^a-záéíóúñü\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
-# Filtros
-st.sidebar.header("Filtros")
-sentiment_filter = st.sidebar.multiselect(
-    "Sentimiento", 
-    options=df['predicted_sentiment'].unique(),
-    default=df['predicted_sentiment'].unique()
+print("🧹 Limpiando texto...")
+tqdm.pandas()
+df['clean_message'] = df['message'].progress_apply(limpiar_texto)
+
+# Análisis
+print("🤖 Analizando sentimiento...")
+sentiment_pipeline = pipeline("sentiment-analysis", 
+                              model="cardiffnlp/twitter-roberta-base-sentiment-latest")
+
+def analizar(texto):
+    try:
+        result = sentiment_pipeline(texto[:512])[0]
+        return result['label'].capitalize(), round(result['score'], 4)
+    except:
+        return "Neutral", 0.5
+
+tqdm.pandas()
+df[['predicted_sentiment', 'confidence']] = df['clean_message'].progress_apply(
+    lambda x: pd.Series(analizar(x))
 )
 
-df_filtered = df[df['predicted_sentiment'].isin(sentiment_filter)]
+print("\n✅ ¡Listo!")
+print(df['predicted_sentiment'].value_counts())
 
-# Métricas
-col1, col2, col3 = st.columns(3)
-col1.metric("Negativo", len(df_filtered[df_filtered['predicted_sentiment']=='Negative']))
-col2.metric("Neutral", len(df_filtered[df_filtered['predicted_sentiment']=='Neutral']))
-col3.metric("Positivo", len(df_filtered[df_filtered['predicted_sentiment']=='Positive']))
-
-# Gráficos
-tab1, tab2, tab3 = st.tabs(["📊 Distribución", "☁️ Nube de Palabras", "📋 Datos"])
-
-with tab1:
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = px.pie(df_filtered, names='predicted_sentiment', title="Distribución de Sentimientos")
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        fig2 = px.histogram(df_filtered, x='predicted_sentiment', color='predicted_sentiment', title="Cantidad por Sentimiento")
-        st.plotly_chart(fig2, use_container_width=True)
-
-with tab2:
-    st.subheader("Nube de Palabras")
-    text = " ".join(df_filtered['clean_message'].astype(str))
-    if len(text) > 100:
-        wc = WordCloud(width=800, height=400, background_color='white').generate(text)
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.imshow(wc, interpolation='bilinear')
-        ax.axis('off')
-        st.pyplot(fig)
-    else:
-        st.info("No hay suficiente texto para generar la nube")
-
-with tab3:
-    st.dataframe(df_filtered[['message', 'predicted_sentiment', 'confidence']].head(50), use_container_width=True)
-
-st.caption("Proyecto de Prácticas Pre Profesionales - Universidad Nacional Mayor de San Marcos")
+# Guardar
+df.to_csv(f"{ruta}/datos_con_sentimiento.csv", index=False)
+print("💾 Guardado en: Analisis_Sentimiento/datos_con_sentimiento.csv")
