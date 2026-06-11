@@ -1,8 +1,8 @@
 streamlit
 pandas
+numpy
+scikit-learn
+joblib
 plotly
 wordcloud
 matplotlib
-transformers
-torch
-tqdm
